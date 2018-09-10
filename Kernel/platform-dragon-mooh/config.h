@@ -67,6 +67,9 @@
 /* We need a tidier way to do this from the loader */
 #define CMDLINE	NULL	  /* Location of root dev name */
 
+/* first partition on SD card */
+#define BOOTDEVICE 1
+
 /* Device parameters */
 #define NUM_DEV_TTY 7
 #define NDEVS    2        /* Devices 0..NDEVS-1 are capable of being mounted */
