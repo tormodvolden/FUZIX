@@ -28,9 +28,18 @@ SRCS  = adv01.c adv02.c adv03.c adv04.c adv05.c adv06.c adv07.c \
 
 SRCSFP =
 
+ZOBJS = z1.o z2.o z3.o z4.o z5.o z8.o
+
+z1.o: CFLAGS += -DVERSION=1
+z2.o: CFLAGS += -DVERSION=2
+z3.o: CFLAGS += -DVERSION=3
+z4.o: CFLAGS += -DVERSION=4
+z5.o: CFLAGS += -DVERSION=5
+z8.o: CFLAGS += -DVERSION=8
+
 OBJS = $(SRCS:.c=.o)
 OBJSFP = $(SRCSFP:.c=.o)
-OBJSNS = $(SRCSNS:.c=.o)
+OBJSNS = $(SRCSNS:.c=.o) $(ZOBJS)
 
 APPS = $(OBJS:.o=)
 APPSFP = $(OBJSFP:.o=)
@@ -41,6 +50,9 @@ all: $(APPS) $(APPSNS) $(APPSFP) size.report
 $(APPS): $(CRT0)
 $(APPSFP): $(CRT0)
 $(APPSNS): $(CRT0NS)
+
+$(ZOBJS): fweep.c
+	$(CC) $(CFLAGS) -c -o $@ $^
 
 $(APPS) $(APPSNS): %: %.o
 	$(LINKER) -o $@ $(LINKER_OPT) $^
