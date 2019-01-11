@@ -134,6 +134,8 @@ void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 		if (vmode < 2)
 			vtoutput(&c, 1);
 	} else if (minor >= 2 && minor <= 4) {
+		if (minor == 2 && c == '\r')
+			c = '\n' + 0x80;
 		vtoutput(&c, 1);
 	}
 	irqrestore(irq);
