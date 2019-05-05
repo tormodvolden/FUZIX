@@ -84,6 +84,7 @@ void create_init(void)
 	uint8_t *j, *e;
 
 	udata.u_top = PROGLOAD + 512;	/* Plenty for the boot */
+	udata.u_ro_blocks = 0;		/* nothing to share */
 	init_process = ptab_alloc();
 	udata.u_ptab = init_process;
 	init_process->p_top = udata.u_top;

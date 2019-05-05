@@ -209,11 +209,16 @@ _dofork:
 
 fork_copy:
 ; copy the process memory to the new banks and stash parent uarea to old banks
+; read-only banks will be shared
 	lda #6				; counter, decremented until negative
+	suba U_DATA__U_RO_BLOCKS
 	pshs a
 	ldx fork_proc_ptr
 	ldx P_TAB__P_PAGE_OFFSET,x	; new bank map
 	ldy U_DATA__U_PAGE		; old bank map
+	lda U_DATA__U_RO_BLOCKS		; skip shared blocks
+	leax a,x
+	leay a,y
 cpbank	lda ,y+				; src
 	cmpa ,y				; repeated bank = last
 	bne notlst

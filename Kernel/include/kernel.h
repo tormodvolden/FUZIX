@@ -507,6 +507,8 @@ typedef struct p_tab {
     uaddr_t	p_profsize;
     uaddr_t	p_profoff;
 #endif    
+    uint16_t	p_image_dev;	/* process image device */
+    uint16_t	p_image_num;	/* process image inode */
 } p_tab, *ptptr;
 
 /*
@@ -534,6 +536,7 @@ typedef struct u_data {
     void *      u_isp;          /* Value of initial sp (argv) */
     usize_t	u_top;		/* Top of memory for this task */
     uaddr_t	u_break;	/* Top of data space */
+    uint8_t	u_ro_blocks;	/* Number of read-only blocks for this task */
 #ifdef CONFIG_32BIT
     uaddr_t	u_codebase;	/* 32bit platform base pointers */
 #endif

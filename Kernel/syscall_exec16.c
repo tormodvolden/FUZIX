@@ -62,6 +62,9 @@ arg_t _execve(void)
 	staticfast uint16_t top;
 	uint16_t bin_size;	/* Will need to be bigger on some cpus */
 	uint16_t bss;
+	uint16_t code_size;
+	uint16_t shared_code;
+	irqflags_t irq;
 
 	top = ramtop;
 
@@ -103,6 +106,9 @@ arg_t _execve(void)
 	else	/* Requested an amount, so adjust for the base */
 		top += progload;
 
+	/* only used for calculating shared read-only pages */
+	code_size = *(uint16_t *)(hdr + 10);
+
 	bss = *(uint16_t *)(hdr + 14);
 
 	/* Binary doesn't fit */
@@ -139,8 +145,26 @@ arg_t _execve(void)
 	   two elements. We never allocate 'code' as there is no split I/D */
 	/* This is only safe from deadlocks providing pagemap_realloc doesn't
 	   sleep */
-	if (pagemap_realloc(0, top - MAPBASE, 0))
+
+	// avoid shared status change or mixing statics in between
+	irq = di();
+	// checks if old text was shared
+	pagemap_shared_text_before(udata.u_ptab);
+
+	/* Update process image inode number, for shared text check */
+	udata.u_ptab->p_image_dev = ino->c_dev;
+	udata.u_ptab->p_image_num = ino->c_num;
+
+	// will check if new text is shared
+	if (pagemap_realloc(code_size, top - MAPBASE, 0))
 		goto nogood3;
+
+	/* retrieve how much is now shared */
+	shared_code = pagemap_shared_text_after();
+	irqrestore(irq);
+
+	// update here or in realloc?
+	udata.u_ro_blocks = code_size >> 13; // off-by-one?
 
 	/* From this point on we are commmited to the exec() completing */
 
@@ -183,7 +207,14 @@ arg_t _execve(void)
 
 	 progptr = progload + 16;
 	 if (bin_size > 16) {
-		bin_size -= 16;
+		if (shared_code) {
+			progptr = progload + shared_code;
+			bin_size -= shared_code;
+			udata.u_offset = shared_code;
+		}
+		else {
+			bin_size -= 16;
+		}
 		udata.u_base = (uint8_t *)progptr;		/* We copied the first block already */
 		udata.u_count = bin_size;
 		udata.u_sysio = false;

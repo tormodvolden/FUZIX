@@ -371,6 +371,12 @@ ptptr ptab_alloc(void)
 					}
 			}
 			newp->p_top = udata.u_top;
+			// share text if fork (not create_init)
+			// could be done later in dofork() ?
+			if (udata.u_ro_blocks) {
+				newp->p_image_dev = udata.u_ptab->p_image_dev;
+				newp->p_image_num = udata.u_ptab->p_image_num;
+			}
 			if (pagemap_alloc(newp) == 0) {
 				newp->p_status = P_FORKING;
 				nproc++;

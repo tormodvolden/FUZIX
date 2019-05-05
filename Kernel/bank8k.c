@@ -104,6 +104,20 @@ void pagemap_add(uint8_t page)
 	pfree[pfptr++] = page;
 }
 
+static ptptr sharing_text(ptptr ourp)
+{
+	/* Go through process table to find /another/ process using the same image file */
+	/*   Return NULL if none */
+	ptptr p;
+	for (p = ptab; p < ptab_end; ++p) {
+		if (p->p_status == P_EMPTY || p == ourp)
+			continue;
+		if (p->p_image_num == ourp->p_image_num && p->p_image_dev == ourp->p_image_dev)
+			return p;
+	}
+	return NULL;
+}
+
 /*
  *	Free the maps for this task
  *
@@ -116,6 +130,10 @@ void pagemap_free(ptptr p)
 	uint8_t *pt = (uint8_t *)p->p_page;
 	uint8_t *e = (uint8_t *)p->p_page + PTNUM - LOBANK;
 	uint8_t last = PAGE_INVALID;
+
+	/* don't free shared text pages */
+	if (sharing_text(p))
+		pt += udata.u_ro_blocks;
 
 	while(pt < e) {
 		if (*pt != PAGE_INVALID && *pt != PAGE_VIDEO && *pt != last) {
@@ -154,17 +172,31 @@ static int maps_needed(uint16_t top)
  *	We have a hackish fix for init that would be nice
  *	resolve.
  *
- *	Use p-> not udata. The udata is not yet swapped in!
+ *	Use p-> not udata. The new udata is not yet swapped in!
+ *
+ *	Called via ptab_alloc() from fork syscall or create_init()
  */
 int pagemap_alloc(ptptr p)
 {
 	uint8_t *ptr;
+	uint8_t *parentptr;
 	int needed = maps_needed(p->p_top);
-	int i;
+	uint8_t i;
+	uint8_t shared;
 
 	/* Cheapest way to keep it non zero */
 	ptr = pmap[p - ptab];
 	p->p_page = (uint16_t)ptr;
+
+	/* on fork share text pages */
+	shared = udata.u_ro_blocks;
+	if (shared > 0) {
+		needed -= shared;
+		parentptr = (uint8_t *) udata.u_ptab->p_page; // SURE?
+		i = shared;
+		while (i-- > 0)
+			*ptr++ = *parentptr++;
+	}
 
 #ifdef SWAPDEV
 	/* Throw our toys out of our pram until we have enough room */
@@ -186,10 +218,10 @@ int pagemap_alloc(ptptr p)
 	 *	common space is right if it is high.
 	 */
 #ifdef CONFIG_SUPERVISOR_SPACE
-	while (i++ < PTNUM - LOBANK)
+	while (i++ < PTNUM - LOBANK - shared)
 		*ptr++ = PAGE_INVALID;
 #else
-	while (i++ < 8 - LOBANK) {
+	while (i++ < 8 - LOBANK - shared) {
 		*ptr = ptr[-1];
 		ptr++;
 	}
@@ -199,6 +231,18 @@ int pagemap_alloc(ptptr p)
 #endif	
 #endif
 	return 0;
+}
+
+/* lazily carry over from pagemap_shared_text_before to pagemap_realloc
+   while ptab is updated with new process image inode */
+static bool was_shared;
+/* reported back by pagemap_shared_after */
+static uint16_t shared_size;
+
+/* Called before pagemap_realloc with old image inode */
+void pagemap_shared_text_before(void)
+{
+	was_shared = (sharing_text(udata.u_ptab) != NULL);
 }
 
 /*
@@ -218,6 +262,10 @@ int pagemap_realloc(usize_t code, usize_t size, usize_t stack)
 	int8_t have = maps_needed(udata.u_top);
 	int8_t want = maps_needed(size + MAPBASE);
 	uint8_t *ptr = (uint8_t *)udata.u_page;
+	uint8_t text_blocks = code >> 13;
+	uint8_t text_blocks_before = udata.u_ro_blocks; // updated afterwards
+	int8_t to_allocate;
+	ptptr companion;
 	int i;
 
 #ifdef CONFIG_VIDMAP8
@@ -225,38 +273,67 @@ int pagemap_realloc(usize_t code, usize_t size, usize_t stack)
 		vidmap_unmap();
 #endif
 
-	/* No change no work */
-	if (want == have)
-		return 0;
+	/* execing the same image could fast-path this */
+	/* small code < one block as well */
 
-	/* If we are shrinking then free pages and propogate the
-	   common page or invalid into the freed spaces */
-	if (want < have) {
-		uint8_t last = ptr[7 - LOBANK];
-		ptr += want - 1;
-		for (i = want; i < have; i++) {
-			pfree[pfptr++] = *ptr;
-			/* We might replicate the top page or we might
-			   replicate the invalid - both work */
-			*ptr++ = last;
-		}
-		program_vectors(&udata.u_page);
-		return 0;
-	}
+	/* check if new process image file is shared */
+	companion = sharing_text(udata.u_ptab);
+	if (companion != NULL)
+		shared_size = text_blocks << 13;
+	else
+		shared_size = 0;
+
+	to_allocate = want - (companion != NULL?text_blocks:0) - have + (was_shared?text_blocks_before:0);
+
 #ifdef SWAPDEV
 	/* Throw our toys out of our pram until we have enough room */
-	while (want - have > pfptr)
+	while (to_allocate > pfptr)
 		if (swapneeded(udata.u_ptab, 1) == NULL)
 			return ENOMEM;
 #else
-	if (want - have > pfptr)	/* We have no swap so poof... */
+	if (to_allocate > pfptr)	/* We have no swap so poof... */
 		return ENOMEM;
 #endif
-	ptr += have - 1;
-	for (i = have; i < want; i++)
-		*ptr++ = pfree[--pfptr];
+
+	/* To succeed in the tighest of situations, first free what can be freed */
+	/* This must be done differently if we want to support process growth */
+
+	/* free old text pages unless held by other processes */
+	if (!was_shared)
+		for (i = 0; i < text_blocks_before; i++)
+			pfree[pfptr++] = ptr[i];
+
+	/* free all old data pages except top one */
+	for (i = text_blocks_before; i < have - 1; i++)
+		pfree[pfptr++] = ptr[i];
+
+	/* allocate new data pages except recycled top one */
+	uint8_t last = ptr[7 - LOBANK];
+	for (i = text_blocks; i < want - 1; i++)
+		ptr[i] = pfree[--pfptr];
+	/* fill in page table with recycled top page */
+	for (i = want - 1; i < 7 - LOBANK; i++)
+		ptr[i] = last;
+
+	/* allocate new text pages if needed */
+	if (companion != NULL) {
+		uint8_t *comp_ptr = (uint8_t *) companion->p_page;
+
+		/* copy block pointers from companion */
+		for (i = 0; i < text_blocks; i++)
+			ptr[i] = comp_ptr[i];
+	} else {
+		for (i = 0; i < text_blocks; i++)
+			ptr[i] = pfree[--pfptr];
+	}
+
 	program_vectors(&udata.u_page);
 	return 0;
+}
+
+uint16_t pagemap_shared_text_after(void)
+{
+	return shared_size;
 }
 
 usize_t pagemap_mem_used(void)
