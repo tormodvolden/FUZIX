@@ -56,9 +56,9 @@
 #define TICKSPERSEC 50   /* Ticks per second */
 /* FIXME: This will move once we put the display in the kernel bank and
    sort the banker out */
-#define PROGBASE    0x2200  /* also data base */
-#define PROGLOAD    0x2200  /* also data base */
-#define PROGTOP     0xFE00  /* Top of program */
+#define PROGBASE    0x2000  /* also data base */
+#define PROGLOAD    0x2000  /* also data base */
+#define PROGTOP     0xFC00  /* Top of program */
 
 #define BOOT_TTY (512 + 1)   /* Set this to default device for stdio, stderr */
                           /* In this case, the default is the first TTY device */
